@@ -7,7 +7,7 @@
 #[allow(unused_imports)]
 use std::fmt::{self, Formatter, Display};
 
-// #[derive(clone)]
+#[derive(Clone)]
 enum Formula {
     Atom(char),
     Not(Box<Formula>),
@@ -37,21 +37,8 @@ fn print_formula(f : &Formula) -> String {
 
 fn simplify(f : Formula) -> Formula
 {
-	simplify3(simplify2(simplify1(f)))
-}
-
-// TODO: remove in favour of Clone::clone().
-fn clone(f : &Formula) -> Formula
-{
-    match f
-    {
-        &Formula::Atom(c) => Formula::Atom(c),
-        &Formula::Not(ref n) => Formula::Not(box clone(&**n)),
-        &Formula::Implies { ref l, ref r } => Formula::Implies { l: box clone(&**l), r: box clone(&**r) },
-        &Formula::Iff { ref l, ref r } => Formula::Iff { l: box clone(&**l), r: box clone(&**r) },
-        &Formula::And(ref v) => Formula::And(v.iter().map(|ref x| clone(x)).collect()),
-        &Formula::Or(ref v) => Formula::Or(v.iter().map(|ref x| clone(x)).collect()),
-    }
+	let (sf, _) = simplify3(simplify2(simplify1(f)));
+	sf
 }
 
 fn simplify1(f : Formula) -> Formula
@@ -64,7 +51,7 @@ fn simplify1(f : Formula) -> Formula
         Formula::Iff { l, r } => {
             let ls = simplify1(*l);
             let rs = simplify1(*r);
-            let nl = Formula::Or(vec!(Formula::Not(box clone(&ls)), clone(&rs)));
+            let nl = Formula::Or(vec!(Formula::Not(box ls.clone()), rs.clone()));
             let nr = Formula::Or(vec!(Formula::Not(box rs), ls));
             Formula::And(vec!(nl, nr))
         },
@@ -96,21 +83,33 @@ fn simplify2(f : Formula) -> Formula
 
 #[allow(dead_code)]
 #[allow(unused_variables)]
-fn simplify3(f: Formula) -> Formula 
+fn simplify3(f: Formula) -> (Formula, bool)
 {
 	match f
 	{
-		g @ Formula::Atom(_) | g @ Formula::Not(_) | g @ Formula::Or(_) => g,
         Formula::Implies { l: _, r: _ } | Formula::Iff { l: _, r: _ } => unimplemented!(),
+		g @ Formula::Atom(_) => (g, false),
+		Formula::Not(nn) => 
+		{
+			let (snn, simplified) = simplify3(*nn);
+			(Formula::Not(box snn), simplified)
+		}
+
+		Formula::Or(v) =>
+		{
+			let mut simplified = false;
+			(Formula::Or(v.into_iter().map(|x| { let (sx, s) = simplify3(x); simplified = simplified | s; sx }).collect()), simplified)
+		}
 
         Formula::And(v) => 
         {
         	// In CNJ, P ^ (Q v S) => (P ^ Q) v (P ^ S).
 
         	// Separate items into disjunctions and others (singles).
+        	let mut simplified = false;
         	let mut singles = Vec::<Formula>::new();
         	let mut multiples = Vec::<Vec<Formula>>::new();
-        	for el in v.into_iter().map(|x| simplify3(x)) 
+        	for el in v.into_iter().map(|x| { let (sx, s) = simplify3(x); simplified = simplified | s; sx }) 
         	{
         		match el 
         		{
@@ -118,36 +117,35 @@ fn simplify3(f: Formula) -> Formula
         			g @ _ => { singles.push(g); }
         		}
         	}
-
             
             let mut disj = Vec::<Formula>::new();
         	let iterations = multiples.iter().fold(1, |acc, ref x| acc * x.len());
         	for i in 0..iterations 
         	{
-            	let mut conj : Vec<Formula> = singles.iter().map(|ref x| clone(x)).collect();
+            	let mut conj : Vec<Formula> = singles.iter().cloned().collect();
         		let mut offset = i;
         		for ov in &multiples
         		{
         			let pick = offset % ov.len();
         			offset = offset / ov.len();
-        			conj.push(clone(&ov[pick]));
+        			conj.push(ov[pick].clone());
         		}
 
         		disj.push(Formula::And(conj));
         	}
 
-        	Formula::Or(disj)
+        	(Formula::Or(disj), simplified || multiples.len() > 0)
         }
 	}
 }
 
 fn main() {
     let nn = Formula::Not(box Formula::Not(box Formula::Atom('A')));
-    println!("{} simplifies to {}", nn, simplify(clone(&nn)));
+    println!("{} simplifies to {}", nn, simplify(nn.clone()));
 
     let example = Formula::Implies { l: box Formula::And(vec!(Formula::Atom('P'), Formula::Not(box Formula::Atom('Q')))), r: box Formula::Atom('R') };
-    println!("{} simplifies to {} and then to {}", example, simplify2(simplify1(clone(&example))), simplify(clone(&example)));
+    println!("{} simplifies to {} and then to {}", example, simplify2(simplify1(example.clone())), simplify(example.clone()));
 
     let another = Formula::Iff { l: box Formula::Or(vec!(Formula::Atom('P'), Formula::Atom('Q'))), r: box Formula::Atom('R') };
-    println!("{} simplifies to {} and then to {}", another, simplify2(simplify1(clone(&another))), simplify(clone(&another)));
+    println!("{} simplifies to {} and then to {}", another, simplify2(simplify1(another.clone())), simplify(another.clone()));
 }
